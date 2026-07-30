@@ -13214,7 +13214,10 @@ dependencies = [
  "tokio",
  "tower",
  "uuid",
+ "zeroclaw-api",
+ "zeroclaw-config",
  "zeroclaw-ledger",
+ "zeroclaw-runtime",
  "zeroclaw-spawn",
 ]
 

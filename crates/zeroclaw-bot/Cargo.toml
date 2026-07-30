@@ -13,6 +13,11 @@ path = "src/main.rs"
 [dependencies]
 zeroclaw-ledger.workspace = true
 zeroclaw-spawn.workspace = true
+# The runtime seam: a participant is a configured ZeroClaw agent that happens to
+# take its context from the ledger rather than from a session.
+zeroclaw-api.workspace = true
+zeroclaw-config.workspace = true
+zeroclaw-runtime.workspace = true
 
 # HTTP server — dependency style follows crates/zeroclaw-gateway/Cargo.toml.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "macros"] }

@@ -2765,10 +2765,98 @@ pub async fn run(
 
 /// Process a single message through the full agent (with tools, peripherals, memory).
 /// Used by channels (Telegram, Discord, etc.) to enable hardware and tool use.
+/// What a turn is started from.
+///
+/// Two callers want different things from the same machinery. A channel or CLI
+/// turn supplies one user message and expects the runtime to build the history
+/// around it. A shared-ledger participant supplies the conversation itself: the
+/// ledger *is* the context window, already projected for this reader, and the
+/// runtime must not editorialise it.
+pub enum TurnInput {
+    /// One user message. The runtime builds the history — system prompt plus a
+    /// user turn, stamped with the local time.
+    Message(String),
+    /// A prepared conversation, used verbatim after the system prompt.
+    ///
+    /// Nothing volatile is added to it. A shared-ledger participant's context
+    /// must render byte-identically every turn, because provider-side prompt
+    /// caching keys on the prompt prefix — a wall-clock stamp would invalidate
+    /// the whole prefix on every single turn and multiply the bill without
+    /// failing anything.
+    History(Vec<ChatMessage>),
+}
+
+impl TurnInput {
+    /// The text standing in for "what was just said".
+    ///
+    /// Drives memory retrieval, tool filtering, and thinking-directive parsing —
+    /// all of which want the current request, not the whole conversation. For a
+    /// supplied history that is the most recent user turn.
+    pub fn query_text(&self) -> &str {
+        match self {
+            TurnInput::Message(message) => message.as_str(),
+            TurnInput::History(history) => history
+                .iter()
+                .rev()
+                .find(|message| message.role == "user")
+                .map(|message| message.content.as_str())
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// Runs one turn from a single user message.
+///
+/// The channel, CLI, and peer-message path. Equivalent to [`process_turn`] with
+/// [`TurnInput::Message`].
 pub async fn process_message(
     config: Config,
     agent_alias: &str,
     message: &str,
+    session_id: Option<&str>,
+    origin: TurnOrigin,
+) -> Result<String> {
+    // Boxed deliberately. `process_turn` is a very large `async fn`, and awaiting
+    // it inline would embed its whole state machine in this wrapper's future,
+    // roughly doubling it. In debug builds that is enough to overflow a test
+    // thread's stack — `send_message_to_peer`'s peer-turn test hit exactly that.
+    // The heap allocation keeps the wrapper's frame flat.
+    Box::pin(process_turn(
+        config,
+        agent_alias,
+        TurnInput::Message(message.to_string()),
+        session_id,
+        origin,
+    ))
+    .await
+}
+
+/// Runs one turn over a prepared conversation.
+///
+/// The shared-ledger participant path: the caller has already projected the
+/// ledger for this reader, and it is used verbatim. Nothing volatile is added.
+pub async fn process_history(
+    config: Config,
+    agent_alias: &str,
+    history: Vec<ChatMessage>,
+    session_id: Option<&str>,
+    origin: TurnOrigin,
+) -> Result<String> {
+    // Boxed for the same reason as `process_message`: see the note there.
+    Box::pin(process_turn(
+        config,
+        agent_alias,
+        TurnInput::History(history),
+        session_id,
+        origin,
+    ))
+    .await
+}
+
+pub async fn process_turn(
+    config: Config,
+    agent_alias: &str,
+    input: TurnInput,
     session_id: Option<&str>,
     origin: TurnOrigin,
 ) -> Result<String> {
@@ -2800,7 +2888,7 @@ pub async fn process_message(
         }
     };
     let __zc_alias = agent_alias.to_string();
-    let __zc_message = message.to_string();
+    let __zc_input = input;
     let __zc_session_id = session_id.map(str::to_string);
     let __zc_attribution_span =
         ::zeroclaw_log::attribution_span!(&crate::agent::AgentAttribution(__zc_alias.as_str()));
@@ -2813,7 +2901,7 @@ pub async fn process_message(
     );
     let __zc_body = async move {
         let agent_alias: &str = __zc_alias.as_str();
-        let message: &str = __zc_message.as_str();
+        let message: &str = __zc_input.query_text();
         let session_id: Option<&str> = __zc_session_id.as_deref();
 
         // ── Effective per-agent runtime tunables ──────────────────────
@@ -3236,17 +3324,36 @@ pub async fn process_message(
             })
             .unwrap_or_default();
         let context = hw_context;
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
-        let enriched = if context.is_empty() {
-            format!("[{now}] {effective_message}")
-        } else {
-            format!("{context}[{now}] {effective_message}")
+        let mut history = match &__zc_input {
+            TurnInput::Message(_) => {
+                let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
+                let enriched = if context.is_empty() {
+                    format!("[{now}] {effective_message}")
+                } else {
+                    format!("{context}[{now}] {effective_message}")
+                };
+                vec![
+                    ChatMessage::system(&system_prompt),
+                    ChatMessage::user(&enriched),
+                ]
+            }
+            TurnInput::History(supplied) => {
+                // The conversation arrives already projected for this reader and
+                // is used verbatim — no timestamp, no re-ordering, no rewriting.
+                // Its bytes are the cached prompt prefix.
+                let mut history = Vec::with_capacity(supplied.len() + 2);
+                history.push(ChatMessage::system(&system_prompt));
+                history.extend(supplied.iter().cloned());
+                // Hardware context is genuinely volatile (live sensor readings),
+                // so it rides at the end rather than the front: caching keys on
+                // the prefix, and volatile-last costs one uncached tail instead
+                // of the entire conversation.
+                if !context.is_empty() {
+                    history.push(ChatMessage::user(&context));
+                }
+                history
+            }
         };
-
-        let mut history = vec![
-            ChatMessage::system(&system_prompt),
-            ChatMessage::user(&enriched),
-        ];
         let mut excluded_tools = compute_excluded_mcp_tools(
             &tools_registry,
             &agent.resolved.tool_filter_groups,

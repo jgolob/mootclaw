@@ -14,7 +14,9 @@
 pub mod compose;
 pub mod draft;
 pub mod mailbox_api;
+pub mod runtime_composer;
 
 pub use compose::{AlwaysPass, Composer, Composition, FixedAnswer};
 pub use draft::{DraftSlot, Outbox};
 pub use mailbox_api::{BotContext, BotState, router};
+pub use runtime_composer::{RuntimeComposer, to_chat_history, to_chat_message};
