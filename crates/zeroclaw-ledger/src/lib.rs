@@ -27,11 +27,17 @@
 //! in the crates above it.
 
 pub mod projection;
+pub mod round;
 pub mod types;
 
 pub use projection::{
     ParticipantIndex, ProjectedMessage, ProjectedRole, ProjectionError, order_round_batch,
     project_for_reader,
+};
+pub use round::{
+    AdmissionOutcome, AdmissionPlan, CurrencyOutcome, DEFAULT_ROUND_TIMEOUT, DEFAULT_STALE_WINDOW,
+    RefusedDraft, RoundCloseReason, RoundError, RoundMachine, RoundStatus, admitted_dispositions,
+    finalize_admission, plan_admission, validate_currency,
 };
 
 pub use types::{
