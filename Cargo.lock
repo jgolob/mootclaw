@@ -13587,6 +13587,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroclaw-orchestrator"
+version = "0.8.3"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "uuid",
+ "zeroclaw-ledger",
+ "zeroclaw-ledger-store",
+ "zeroclaw-spawn",
+]
+
+[[package]]
 name = "zeroclaw-plugins"
 version = "0.8.3"
 dependencies = [
