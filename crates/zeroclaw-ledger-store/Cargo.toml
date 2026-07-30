@@ -14,7 +14,15 @@ zeroclaw-ledger.workspace = true
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
 thiserror = "2.0"
+# tokio-postgres rather than sqlx: sqlx resolves `sqlx-sqlite` into the
+# lockfile even when unused, and its libsqlite3-sys conflicts with the
+# rusqlite the workspace already links. Cargo rejects two packages linking
+# `sqlite3` at resolution time, regardless of what is actually built.
+tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }
+deadpool-postgres = "0.14"
+tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time"] }
 uuid = { version = "1.22", default-features = false, features = ["v4", "std", "serde"] }
 
 [dev-dependencies]

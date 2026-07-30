@@ -18,9 +18,11 @@
 pub mod conformance;
 pub mod fixtures;
 pub mod memory;
+pub mod postgres;
 pub mod store;
 
 pub use memory::InMemoryLedgerStore;
+pub use postgres::PgLedgerStore;
 pub use store::{
     ConversationMeta, LedgerStore, ProposalRecord, Result, StoreError, StoredAuditEvent,
 };

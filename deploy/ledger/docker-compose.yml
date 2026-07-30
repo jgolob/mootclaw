@@ -1,0 +1,41 @@
+# Shared-ledger stack.
+#
+# Separate from the repository-root docker-compose.yml, which runs a single
+# ZeroClaw agent with its gateway. This one is the multi-agent inversion: an
+# orchestrator that owns the ledger, and participants that hold no conversation
+# state of their own.
+#
+# The database is the orchestrator's alone. Participants never receive a
+# connection string — they talk to the orchestrator over their mailboxes, which
+# is what makes "the orchestrator is the sole writer" structural rather than a
+# convention.
+#
+# Bring up the database for tests:
+#
+#   docker compose -f deploy/ledger/docker-compose.yml up -d ledger-db
+#   export LEDGER_TEST_DATABASE_URL=postgres://zeroclaw:zeroclaw@localhost:5433/zeroclaw_ledger
+#   cargo test -p zeroclaw-ledger-store
+#
+# Host port 5433, so this never collides with a Postgres already on 5432.
+
+services:
+  ledger-db:
+    image: postgres:17-alpine
+    container_name: zeroclaw-ledger-db
+    environment:
+      POSTGRES_USER: zeroclaw
+      # Local development only. A real deployment supplies this from a secret.
+      POSTGRES_PASSWORD: zeroclaw
+      POSTGRES_DB: zeroclaw_ledger
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zeroclaw -d zeroclaw_ledger"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - ledger-db-data:/var/lib/postgresql/data
+
+volumes:
+  ledger-db-data:
