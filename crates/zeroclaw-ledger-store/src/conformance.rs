@@ -150,6 +150,20 @@ where
         "entries must land in submitted order"
     );
 
+    // Wall time is recorded for QC, and only there: it is absent from the entries
+    // themselves so no projection can carry it into a participant's context.
+    let timestamps = store
+        .entry_timestamps(conversation)
+        .await
+        .expect("read entry timestamps");
+    assert_eq!(
+        timestamps.len(),
+        3,
+        "the store records when each entry landed, for logging and QC"
+    );
+    let stamped_sequences: Vec<Seq> = timestamps.iter().map(|(seq, _)| *seq).collect();
+    assert_eq!(stamped_sequences, assigned, "timestamps track the entries");
+
     for (entry, seq) in stored.iter().zip(&assigned) {
         assert_eq!(
             entry.seq, *seq,

@@ -156,6 +156,22 @@ pub trait LedgerStore: Send + Sync {
         from: Seq,
     ) -> Result<Vec<LedgerEntry>>;
 
+    /// When each entry landed, for logging and QC.
+    ///
+    /// Wall time is **operational metadata, not conversation content**. It is
+    /// deliberately absent from [`LedgerEntry`] so that no projection can carry
+    /// it into a participant's context: ordering is `seq`, causality is `round`,
+    /// and a clock would only invent an ordering between contributions that were
+    /// revealed simultaneously — besides being volatile, which would break
+    /// byte-stable projection and with it prompt caching.
+    ///
+    /// Nothing on the projection path may call this. Operators and debugging
+    /// tools may.
+    async fn entry_timestamps(
+        &self,
+        conversation: ConversationId,
+    ) -> Result<Vec<(Seq, DateTime<Utc>)>>;
+
     /// Opens a round, marking every contributor [`RoundDisposition::Pending`].
     ///
     /// Observers are not enrolled: they receive context but never hold up a round.

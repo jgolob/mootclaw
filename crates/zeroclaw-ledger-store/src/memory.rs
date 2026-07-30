@@ -36,8 +36,20 @@ struct Conversation {
     visible_from: Seq,
     members: BTreeMap<ParticipantId, MemberRole>,
     /// Append-only. Tombstoning flips a flag; nothing is ever removed.
-    entries: Vec<LedgerEntry>,
+    entries: Vec<StoredEntry>,
     rounds: BTreeMap<Round, RoundRecord>,
+}
+
+/// A ledger entry with the wall time it landed.
+///
+/// The timestamp is storage metadata for logging and QC. It is deliberately not
+/// part of [`LedgerEntry`], so it cannot reach a projection: ordering is `seq`
+/// and causality is `round`, and a clock would only invent a false ordering
+/// between contributions that were genuinely concurrent.
+#[derive(Debug)]
+struct StoredEntry {
+    entry: LedgerEntry,
+    recorded_at: DateTime<Utc>,
 }
 
 #[derive(Debug)]
@@ -190,7 +202,7 @@ impl LedgerStore for InMemoryLedgerStore {
         round: Round,
         entries: Vec<NewEntry>,
     ) -> Result<Vec<Seq>> {
-        let created_at = Utc::now();
+        let recorded_at = Utc::now();
         let mut state = self.state()?;
         let conversation = conversation(&mut state, conversation_id)?;
 
@@ -200,15 +212,17 @@ impl LedgerStore for InMemoryLedgerStore {
         for entry in entries {
             let seq = Seq(conversation.head.0 + 1);
             conversation.head = seq;
-            conversation.entries.push(LedgerEntry {
-                conversation_id,
-                seq,
-                round,
-                participant_id: entry.participant_id,
-                content: entry.content,
-                kind: entry.kind,
-                created_at,
-                tombstoned: false,
+            conversation.entries.push(StoredEntry {
+                entry: LedgerEntry {
+                    conversation_id,
+                    seq,
+                    round,
+                    participant_id: entry.participant_id,
+                    content: entry.content,
+                    kind: entry.kind,
+                    tombstoned: false,
+                },
+                recorded_at,
             });
             assigned.push(seq);
         }
@@ -226,8 +240,22 @@ impl LedgerStore for InMemoryLedgerStore {
         Ok(conversation
             .entries
             .iter()
+            .map(|stored| &stored.entry)
             .filter(|entry| entry.seq > from && entry.seq > floor && !entry.tombstoned)
             .cloned()
+            .collect())
+    }
+
+    async fn entry_timestamps(
+        &self,
+        conversation_id: ConversationId,
+    ) -> Result<Vec<(Seq, DateTime<Utc>)>> {
+        let mut state = self.state()?;
+        let conversation = conversation(&mut state, conversation_id)?;
+        Ok(conversation
+            .entries
+            .iter()
+            .map(|stored| (stored.entry.seq, stored.recorded_at))
             .collect())
     }
 
@@ -367,9 +395,9 @@ impl LedgerStore for InMemoryLedgerStore {
         let mut state = self.state()?;
         let conversation = conversation(&mut state, conversation_id)?;
         let mut affected = 0u64;
-        for entry in conversation.entries.iter_mut() {
-            if entry.seq >= from && !entry.tombstoned {
-                entry.tombstoned = true;
+        for stored in conversation.entries.iter_mut() {
+            if stored.entry.seq >= from && !stored.entry.tombstoned {
+                stored.entry.tombstoned = true;
                 affected += 1;
             }
         }

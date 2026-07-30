@@ -55,9 +55,6 @@ fn agent(n: u128, alias: &str) -> Participant {
 /// which several peers were revealed simultaneously.
 fn ledger() -> Vec<LedgerEntry> {
     let conversation = ConversationId(uuid::Uuid::from_u128(0xC0FFEE));
-    let created_at =
-        chrono::DateTime::from_timestamp(1_700_000_000, 0).expect("valid fixed timestamp");
-
     let script: [(i64, i64, u128, &str, bool); 12] = [
         (1, 1, 1, "Should we adopt the round-based scheme?", false),
         (2, 2, 2, "Yes — it bounds cost predictably.", false),
@@ -91,7 +88,6 @@ fn ledger() -> Vec<LedgerEntry> {
                 participant_id: id(participant),
                 content: content.to_string(),
                 kind: EntryKind::Contribution,
-                created_at,
                 tombstoned,
             },
         )

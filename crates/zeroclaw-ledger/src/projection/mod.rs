@@ -202,7 +202,6 @@ pub fn project_for_reader(
 mod tests {
     use super::*;
     use crate::types::{ConversationId, EntryKind, ParticipantKind, Round};
-    use chrono::{DateTime, Utc};
     use uuid::Uuid;
 
     fn conversation() -> ConversationId {
@@ -211,10 +210,6 @@ mod tests {
 
     fn id(n: u128) -> ParticipantId {
         ParticipantId(Uuid::from_u128(n))
-    }
-
-    fn timestamp() -> DateTime<Utc> {
-        DateTime::from_timestamp(1_700_000_000, 0).expect("valid fixed timestamp")
     }
 
     fn human(n: u128, name: &str) -> Participant {
@@ -243,7 +238,6 @@ mod tests {
             participant_id: participant,
             content: content.to_string(),
             kind: EntryKind::Contribution,
-            created_at: timestamp(),
             tombstoned: false,
         }
     }

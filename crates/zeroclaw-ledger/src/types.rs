@@ -1,9 +1,11 @@
 //! Domain types for the shared conversation ledger.
 //!
-//! Pure data only: no I/O, no clock reads, no async. Every timestamp that
-//! appears here was assigned by the orchestrator and is carried as data.
+//! Pure data only: no I/O, no clock reads, no async — and **no wall time**.
+//! Ordering is [`Seq`] and causality is [`Round`]; a clock would add nothing
+//! except a false ordering between contributions that were genuinely concurrent.
+//! Timestamps live where they belong, in the store's own tables and the audit
+//! log, for logging and QC.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -88,6 +90,27 @@ pub enum EntryKind {
 
 /// One admitted contribution. This is the unit the ledger is made of and, in
 /// aggregate, the context window of every participant.
+///
+/// # There is no timestamp here, deliberately
+///
+/// Wall time is irrelevant to what a conversation *is*, and carries no
+/// information that `(round, seq)` does not carry better:
+///
+/// - **Ordering** is [`Seq`], assigned by the sole writer. No clock skew, no
+///   ties, no reordering.
+/// - **Causality** is [`Round`]. Entries sharing a round were revealed
+///   simultaneously and provably did not see one another; a later round provably
+///   did. That is a real happens-before relation.
+///
+/// Timestamps would be *worse* than absent: two contributions from the same
+/// round would get an ordering — `14:03:07.912` before `14:03:07.914` — that is
+/// pure noise, and a reader would wrongly infer the second had seen the first.
+/// Concurrency is a fact about this system, and only round membership states it.
+///
+/// Wall time survives only where it is operational: the store records when rows
+/// landed, for logging and QC; envelopes carry a round deadline; audit events are
+/// stamped on arrival. None of it is ever projected, and keeping it off this type
+/// means no projection *can* leak it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerEntry {
     pub conversation_id: ConversationId,
@@ -98,7 +121,6 @@ pub struct LedgerEntry {
     pub participant_id: ParticipantId,
     pub content: String,
     pub kind: EntryKind,
-    pub created_at: DateTime<Utc>,
     /// Tombstoned entries are excluded from projection but never deleted —
     /// the ledger is logically append-only.
     pub tombstoned: bool,
@@ -269,10 +291,6 @@ mod tests {
         ConversationId(Uuid::from_u128(0x22))
     }
 
-    fn timestamp() -> DateTime<Utc> {
-        DateTime::from_timestamp(1_700_000_000, 0).expect("valid fixed timestamp")
-    }
-
     #[test]
     fn newtypes_round_trip() {
         roundtrip(conversation_id());
@@ -329,7 +347,6 @@ mod tests {
             participant_id: participant_id(),
             content: "the point I wish to make".to_string(),
             kind: EntryKind::Contribution,
-            created_at: timestamp(),
             tombstoned: false,
         });
         roundtrip(NewEntry {
@@ -420,6 +437,44 @@ mod tests {
             kind: AuditKind::Expunged,
             detail: "operator action".to_string(),
         });
+    }
+
+    #[test]
+    fn ledger_entries_carry_no_wall_time() {
+        // Ordering is `seq`, causality is `round`. A timestamp here would invent
+        // an ordering between contributions that were revealed simultaneously,
+        // and — being volatile — would break byte-stable projection and with it
+        // provider-side prompt caching.
+        let json = serde_json::to_value(LedgerEntry {
+            conversation_id: conversation_id(),
+            seq: Seq(1),
+            round: Round(1),
+            participant_id: participant_id(),
+            content: "a contribution".to_string(),
+            kind: EntryKind::Contribution,
+            tombstoned: false,
+        })
+        .expect("serialize entry");
+        let object = json.as_object().expect("entry is an object");
+
+        let expected: std::collections::BTreeSet<&str> = [
+            "conversation_id",
+            "seq",
+            "round",
+            "participant_id",
+            "content",
+            "kind",
+            "tombstoned",
+        ]
+        .into_iter()
+        .collect();
+        let actual: std::collections::BTreeSet<&str> = object.keys().map(String::as_str).collect();
+
+        assert_eq!(
+            actual, expected,
+            "LedgerEntry's field set changed. Wall time in particular must stay out: \
+             `(round, seq)` carries ordering and causality, and a clock would only add noise."
+        );
     }
 
     #[test]
