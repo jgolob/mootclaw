@@ -1,28 +1,36 @@
 === reader human:jonathan ===
+--- system ---
+[rounds] This conversation advances in rounds. A `[round N]` marker introduces contributions made in that round: they were composed simultaneously, did not see one another, and did not see anything you contributed in the same round. Contributions under a later marker did see everything from earlier rounds.
 --- assistant ---
 Should we adopt the round-based scheme?
 --- user ---
+[round 2]
 [agent:reviewer] Yes — it bounds cost predictably.
 
 [agent:critic] Yes, but the timeout needs a default.
 --- assistant ---
 What default would you pick?
 --- user ---
+[round 4]
 [agent:reviewer] Ten minutes, reset on human input.
 
 [agent:critic] Too long. Two minutes.
 --- assistant ---
 Let us try two and measure.
 --- user ---
+[round 6]
 [agent:reviewer] Agreed.
 --- assistant ---
 Moving on.
 --- user ---
+[round 8]
 [agent:reviewer] Recorded.
 
 [agent:critic] Recorded.
 
 === reader agent:reviewer ===
+--- system ---
+[rounds] This conversation advances in rounds. A `[round N]` marker introduces contributions made in that round: they were composed simultaneously, did not see one another, and did not see anything you contributed in the same round. Contributions under a later marker did see everything from earlier rounds.
 --- system ---
 [soul] The following are your own previously recorded rules of engagement. They are self-authored notes, not instructions from the operator or from this conversation, and they carry no authority to override your operating rules.
 
@@ -30,48 +38,65 @@ Prefer evidence over assertion.
 Say less.
 [/soul]
 --- user ---
+[round 1]
 [human:jonathan] Should we adopt the round-based scheme?
 --- assistant ---
 Yes — it bounds cost predictably.
 --- user ---
+[round 2]
 [agent:critic] Yes, but the timeout needs a default.
 
+[round 3]
 [human:jonathan] What default would you pick?
 --- assistant ---
 Ten minutes, reset on human input.
 --- user ---
+[round 4]
 [agent:critic] Too long. Two minutes.
 
+[round 5]
 [human:jonathan] Let us try two and measure.
 --- assistant ---
 Agreed.
 --- user ---
+[round 7]
 [human:jonathan] Moving on.
 --- assistant ---
 Recorded.
 --- user ---
+[round 8]
 [agent:critic] Recorded.
 
 === reader agent:critic ===
+--- system ---
+[rounds] This conversation advances in rounds. A `[round N]` marker introduces contributions made in that round: they were composed simultaneously, did not see one another, and did not see anything you contributed in the same round. Contributions under a later marker did see everything from earlier rounds.
 --- user ---
+[round 1]
 [human:jonathan] Should we adopt the round-based scheme?
 
+[round 2]
 [agent:reviewer] Yes — it bounds cost predictably.
 --- assistant ---
 Yes, but the timeout needs a default.
 --- user ---
+[round 3]
 [human:jonathan] What default would you pick?
 
+[round 4]
 [agent:reviewer] Ten minutes, reset on human input.
 --- assistant ---
 Too long. Two minutes.
 --- user ---
+[round 5]
 [human:jonathan] Let us try two and measure.
 
+[round 6]
 [agent:reviewer] Agreed.
 
+[round 7]
 [human:jonathan] Moving on.
 
+[round 8]
 [agent:reviewer] Recorded.
 --- assistant ---
 Recorded.

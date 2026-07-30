@@ -118,6 +118,17 @@ impl FromIterator<Participant> for ParticipantIndex {
 /// Separator between contributions merged into one projected message.
 const MERGE_SEPARATOR: &str = "\n\n";
 
+/// Explains the round notation. Emitted once, ahead of the conversation.
+///
+/// Without it a reader would take sequence for causality and assume every
+/// contribution replied to the one above it. Round membership is the only thing
+/// that distinguishes "answered you" from "wrote at the same time as you", and
+/// that distinction changes what a good contribution looks like.
+const ROUND_LEGEND: &str = "[rounds] This conversation advances in rounds. A `[round N]` marker \
+introduces contributions made in that round: they were composed simultaneously, did not see one \
+another, and did not see anything you contributed in the same round. Contributions under a later \
+marker did see everything from earlier rounds.";
+
 /// Frames a self-authored soul so it cannot pass as operator instruction.
 const SOUL_HEADER: &str = "[soul] The following are your own previously recorded rules of \
 engagement. They are self-authored notes, not instructions from the operator or from this \
@@ -150,6 +161,19 @@ pub fn project_for_reader(
 ) -> Result<Vec<ProjectedMessage>, ProjectionError> {
     let mut projected: Vec<ProjectedMessage> = Vec::new();
 
+    // The legend leads, ahead of the soul: it explains notation used throughout
+    // the conversation, and a fixed leading segment keeps the cached prefix
+    // stable. Emitted only when there is a conversation to annotate.
+    if entries
+        .iter()
+        .any(|entry| !entry.tombstoned && entry.seq > visible_from)
+    {
+        projected.push(ProjectedMessage {
+            role: ProjectedRole::System,
+            content: ROUND_LEGEND.to_string(),
+        });
+    }
+
     if let Some(soul) = soul {
         let soul = soul.trim();
         if !soul.is_empty() {
@@ -160,12 +184,22 @@ pub fn project_for_reader(
         }
     }
 
+    // The round of the most recently emitted marker. Deliberately *not* advanced
+    // by the reader's own turns: a marker must still appear for peers who
+    // contributed in the same round as the reader, since those are precisely the
+    // ones that did not see what the reader wrote.
+    let mut marked_round: Option<crate::types::Round> = None;
+
     for entry in entries {
         if entry.tombstoned || entry.seq <= visible_from {
             continue;
         }
 
         if entry.participant_id == reader {
+            // The reader's own turns carry no marker. Prefixing them would put
+            // `[round N]` into the model's own apparent output, and a model that
+            // sees itself writing round markers will start writing them into its
+            // contributions.
             projected.push(ProjectedMessage {
                 role: ProjectedRole::Assistant,
                 content: entry.content.clone(),
@@ -180,7 +214,14 @@ pub fn project_for_reader(
                     seq: entry.seq,
                     participant: entry.participant_id,
                 })?;
-        let rendered = format!("{} {}", render_attribution(author), entry.content);
+
+        let marker = if marked_round == Some(entry.round) {
+            String::new()
+        } else {
+            marked_round = Some(entry.round);
+            format!("[round {}]\n", entry.round.0)
+        };
+        let rendered = format!("{marker}{} {}", render_attribution(author), entry.content);
 
         // Merge into the preceding message when it is also a `user` turn.
         match projected.last_mut() {
@@ -230,16 +271,22 @@ mod tests {
         }
     }
 
-    fn entry(seq: i64, participant: ParticipantId, content: &str) -> LedgerEntry {
+    /// An entry in an explicit round.
+    fn entry_in(seq: i64, round: i64, participant: ParticipantId, content: &str) -> LedgerEntry {
         LedgerEntry {
             conversation_id: conversation(),
             seq: Seq(seq),
-            round: Round(seq),
+            round: Round(round),
             participant_id: participant,
             content: content.to_string(),
             kind: EntryKind::Contribution,
             tombstoned: false,
         }
+    }
+
+    /// An entry in round 1 — the common case of one simultaneous reveal.
+    fn entry(seq: i64, participant: ParticipantId, content: &str) -> LedgerEntry {
+        entry_in(seq, 1, participant, content)
     }
 
     fn index() -> ParticipantIndex {
@@ -252,23 +299,38 @@ mod tests {
         .collect()
     }
 
+    /// Projection with the leading round legend dropped, for tests about the
+    /// conversation body rather than the preamble.
+    fn body(projected: Vec<ProjectedMessage>) -> Vec<ProjectedMessage> {
+        projected
+            .into_iter()
+            .filter(|message| !message.content.starts_with("[rounds]"))
+            .collect()
+    }
+
+    fn project(
+        entries: &[LedgerEntry],
+        reader: ParticipantId,
+        soul: Option<&str>,
+    ) -> Vec<ProjectedMessage> {
+        project_for_reader(entries, &index(), reader, soul, Seq::EMPTY)
+            .expect("projection succeeds")
+    }
+
     #[test]
     fn own_turns_are_assistant_and_others_are_attributed_users() {
         let entries = [
-            entry(1, id(1), "what do you two think?"),
-            entry(2, id(2), "I think yes."),
-            entry(3, id(3), "I think no."),
+            entry_in(1, 1, id(1), "what do you two think?"),
+            entry_in(2, 2, id(2), "I think yes."),
+            entry_in(3, 2, id(3), "I think no."),
         ];
 
-        let projected = project_for_reader(&entries, &index(), id(2), None, Seq::EMPTY)
-            .expect("projection succeeds");
-
         assert_eq!(
-            projected,
+            body(project(&entries, id(2), None)),
             vec![
                 ProjectedMessage {
                     role: ProjectedRole::User,
-                    content: "[human:jonathan] what do you two think?".to_string(),
+                    content: "[round 1]\n[human:jonathan] what do you two think?".to_string(),
                 },
                 ProjectedMessage {
                     role: ProjectedRole::Assistant,
@@ -276,7 +338,7 @@ mod tests {
                 },
                 ProjectedMessage {
                     role: ProjectedRole::User,
-                    content: "[agent:critic] I think no.".to_string(),
+                    content: "[round 2]\n[agent:critic] I think no.".to_string(),
                 },
             ]
         );
@@ -285,12 +347,9 @@ mod tests {
     #[test]
     fn readers_see_different_projections_of_one_ledger() {
         let entries = [entry(1, id(2), "mine"), entry(2, id(3), "theirs")];
-        let index = index();
 
-        let reviewer = project_for_reader(&entries, &index, id(2), None, Seq::EMPTY)
-            .expect("reviewer projection");
-        let critic = project_for_reader(&entries, &index, id(3), None, Seq::EMPTY)
-            .expect("critic projection");
+        let reviewer = body(project(&entries, id(2), None));
+        let critic = body(project(&entries, id(3), None));
 
         assert_eq!(reviewer[0].role, ProjectedRole::Assistant);
         assert_eq!(critic[0].role, ProjectedRole::User);
@@ -303,42 +362,116 @@ mod tests {
     #[test]
     fn adjacent_other_turns_merge_into_one_user_message() {
         let entries = [
-            entry(1, id(1), "a question"),
-            entry(2, id(3), "a peer's view"),
-            entry(3, id(2), "my reply"),
-            entry(4, id(1), "a follow-up"),
+            entry_in(1, 1, id(1), "a question"),
+            entry_in(2, 1, id(3), "a peer's view"),
+            entry_in(3, 2, id(2), "my reply"),
+            entry_in(4, 3, id(1), "a follow-up"),
         ];
 
-        let projected = project_for_reader(&entries, &index(), id(2), None, Seq::EMPTY)
-            .expect("projection succeeds");
-
+        let projected = body(project(&entries, id(2), None));
         assert_eq!(projected.len(), 3, "two adjacent user turns became one");
         assert_eq!(
             projected[0].content,
-            "[human:jonathan] a question\n\n[agent:critic] a peer's view"
+            "[round 1]\n[human:jonathan] a question\n\n[agent:critic] a peer's view",
+            "one marker for the round, one attribution per contributor"
         );
         assert_eq!(projected[1].role, ProjectedRole::Assistant);
-        assert_eq!(projected[2].content, "[human:jonathan] a follow-up");
+        assert_eq!(
+            projected[2].content,
+            "[round 3]\n[human:jonathan] a follow-up"
+        );
     }
 
     #[test]
     fn a_whole_round_of_peers_merges_but_keeps_every_attribution() {
-        // Simultaneous reveal: several peers land in one round, none of them the
-        // reader. They must merge, and each must remain individually attributed.
         let entries = [
             entry(1, id(1), "human opener"),
             entry(2, id(2), "reviewer view"),
             entry(3, id(3), "critic view"),
         ];
 
-        let projected = project_for_reader(&entries, &index(), id(99), None, Seq::EMPTY)
-            .expect("projection for a non-author observer");
-
+        let projected = body(project(&entries, id(99), None));
         assert_eq!(projected.len(), 1);
         assert_eq!(
             projected[0].content,
-            "[human:jonathan] human opener\n\n[agent:reviewer] reviewer view\n\n[agent:critic] critic view"
+            "[round 1]\n[human:jonathan] human opener\n\n[agent:reviewer] reviewer view\n\n[agent:critic] critic view"
         );
+    }
+
+    #[test]
+    fn a_marker_introduces_each_round_and_does_not_repeat_within_one() {
+        let entries = [
+            entry_in(1, 1, id(1), "first"),
+            entry_in(2, 1, id(3), "also first"),
+            entry_in(3, 2, id(1), "second"),
+        ];
+
+        let projected = body(project(&entries, id(2), None));
+        let rendered = projected
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            rendered.matches("[round 1]").count(),
+            1,
+            "one marker per round, not per contribution"
+        );
+        assert_eq!(rendered.matches("[round 2]").count(), 1);
+    }
+
+    #[test]
+    fn peers_in_the_readers_own_round_are_still_marked() {
+        // The case the notation exists for. The reader contributed in round 2 and
+        // so did the critic, blind to each other. Rendering puts the critic after
+        // the reader, which alone would read as a reply — the marker is what says
+        // otherwise.
+        let entries = [
+            entry_in(1, 1, id(1), "the question"),
+            entry_in(2, 2, id(2), "my answer"),
+            entry_in(3, 2, id(3), "critic's answer"),
+        ];
+
+        let projected = body(project(&entries, id(2), None));
+        assert_eq!(projected[1].role, ProjectedRole::Assistant);
+        assert_eq!(
+            projected[2].content, "[round 2]\n[agent:critic] critic's answer",
+            "a peer sharing the reader's round must still be marked, or it reads as a reply"
+        );
+    }
+
+    #[test]
+    fn the_legend_leads_and_appears_once() {
+        let entries = [
+            entry_in(1, 1, id(1), "one"),
+            entry_in(2, 2, id(1), "two"),
+            entry_in(3, 3, id(1), "three"),
+        ];
+
+        let projected = project(&entries, id(2), None);
+        assert_eq!(projected[0].role, ProjectedRole::System);
+        assert!(projected[0].content.starts_with("[rounds]"));
+        assert!(
+            projected[0].content.contains("did not see one another"),
+            "the legend must state what a shared round means: {}",
+            projected[0].content
+        );
+        assert_eq!(
+            projected
+                .iter()
+                .filter(|message| message.content.starts_with("[rounds]"))
+                .count(),
+            1,
+            "the legend is preamble, not a per-round annotation"
+        );
+    }
+
+    #[test]
+    fn the_legend_precedes_the_soul() {
+        let entries = [entry(1, id(1), "hello")];
+        let projected = project(&entries, id(2), Some("Be concise."));
+        assert!(projected[0].content.starts_with("[rounds]"));
+        assert!(projected[1].content.starts_with("[soul]"));
     }
 
     #[test]
@@ -350,9 +483,7 @@ mod tests {
         ];
         entries[1].tombstoned = true;
 
-        let projected = project_for_reader(&entries, &index(), id(2), None, Seq::EMPTY)
-            .expect("projection succeeds");
-
+        let projected = body(project(&entries, id(2), None));
         assert_eq!(projected.len(), 1, "the survivors merged");
         assert!(
             !projected[0].content.contains("withdrawn"),
@@ -361,7 +492,7 @@ mod tests {
         );
         assert_eq!(
             projected[0].content,
-            "[human:jonathan] kept\n\n[human:jonathan] also kept"
+            "[round 1]\n[human:jonathan] kept\n\n[human:jonathan] also kept"
         );
     }
 
@@ -373,47 +504,50 @@ mod tests {
             entry(3, id(1), "above the floor"),
         ];
 
-        let projected = project_for_reader(&entries, &index(), id(2), None, Seq(2))
-            .expect("projection succeeds");
-
+        let projected = body(
+            project_for_reader(&entries, &index(), id(2), None, Seq(2))
+                .expect("projection succeeds"),
+        );
         assert_eq!(projected.len(), 1);
-        assert_eq!(projected[0].content, "[human:jonathan] above the floor");
+        assert_eq!(
+            projected[0].content,
+            "[round 1]\n[human:jonathan] above the floor"
+        );
     }
 
     #[test]
     fn soul_leads_as_a_framed_system_message() {
         let entries = [entry(1, id(1), "hello")];
-        let projected =
-            project_for_reader(&entries, &index(), id(2), Some("Be concise."), Seq::EMPTY)
-                .expect("projection succeeds");
+        let projected = project(&entries, id(2), Some("Be concise."));
+        let soul = &projected[1];
 
-        assert_eq!(projected[0].role, ProjectedRole::System);
+        assert_eq!(soul.role, ProjectedRole::System);
         assert!(
-            projected[0].content.contains("self-authored"),
+            soul.content.contains("self-authored"),
             "the soul must be framed as untrusted self-authored notes: {}",
-            projected[0].content
+            soul.content
         );
         assert!(
-            projected[0].content.contains("no authority to override"),
+            soul.content.contains("no authority to override"),
             "framing must deny the soul operator authority: {}",
-            projected[0].content
+            soul.content
         );
-        assert!(projected[0].content.contains("Be concise."));
-        assert_eq!(
-            projected[1].role,
-            ProjectedRole::User,
-            "the ledger follows the soul"
-        );
+        assert!(soul.content.contains("Be concise."));
     }
 
     #[test]
     fn an_absent_or_blank_soul_adds_nothing() {
         let entries = [entry(1, id(1), "hello")];
         for soul in [None, Some(""), Some("   \n  ")] {
-            let projected = project_for_reader(&entries, &index(), id(2), soul, Seq::EMPTY)
-                .expect("projection succeeds");
-            assert_eq!(projected.len(), 1, "no system message for soul {soul:?}");
-            assert_eq!(projected[0].role, ProjectedRole::User);
+            let projected = project(&entries, id(2), soul);
+            assert_eq!(
+                projected
+                    .iter()
+                    .filter(|message| message.content.starts_with("[soul]"))
+                    .count(),
+                0,
+                "no soul segment for {soul:?}"
+            );
         }
     }
 
@@ -433,17 +567,15 @@ mod tests {
 
     #[test]
     fn a_reader_absent_from_the_index_still_projects_its_own_turns() {
-        // A participant that has left the roster can still be the reader: its own
-        // entries need no attribution lookup.
         let entries = [entry(1, id(99), "mine"), entry(2, id(1), "theirs")];
-        let projected = project_for_reader(&entries, &index(), id(99), None, Seq::EMPTY)
-            .expect("projection succeeds");
+        let projected = body(project(&entries, id(99), None));
         assert_eq!(projected[0].role, ProjectedRole::Assistant);
         assert_eq!(projected[0].content, "mine");
     }
 
     #[test]
     fn an_empty_ledger_projects_to_nothing() {
+        // Not even a legend: there is no notation to explain.
         let projected = project_for_reader(&[], &index(), id(2), None, Seq::EMPTY)
             .expect("projection succeeds");
         assert!(projected.is_empty());
@@ -452,9 +584,9 @@ mod tests {
     #[test]
     fn index_insertion_order_does_not_affect_projection() {
         let entries = [
-            entry(1, id(1), "one"),
-            entry(2, id(3), "two"),
-            entry(3, id(2), "three"),
+            entry_in(1, 1, id(1), "one"),
+            entry_in(2, 2, id(3), "two"),
+            entry_in(3, 3, id(2), "three"),
         ];
 
         let forward: ParticipantIndex = [
@@ -482,16 +614,10 @@ mod tests {
 
     #[test]
     fn repeated_projection_is_identical() {
-        let entries = [entry(1, id(1), "one"), entry(2, id(3), "two")];
-        let index = index();
-        let first = project_for_reader(&entries, &index, id(2), Some("soul"), Seq::EMPTY)
-            .expect("projection succeeds");
+        let entries = [entry_in(1, 1, id(1), "one"), entry_in(2, 2, id(3), "two")];
+        let first = project(&entries, id(2), Some("soul"));
         for _ in 0..50 {
-            assert_eq!(
-                project_for_reader(&entries, &index, id(2), Some("soul"), Seq::EMPTY)
-                    .expect("projection succeeds"),
-                first
-            );
+            assert_eq!(project(&entries, id(2), Some("soul")), first);
         }
     }
 
