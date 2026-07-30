@@ -13894,6 +13894,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroclaw-tui"
+version = "0.8.3"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "zeroclaw-ledger",
+]
+
+[[package]]
 name = "zeroclawlabs"
 version = "0.8.3"
 dependencies = [

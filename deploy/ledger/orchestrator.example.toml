@@ -1,0 +1,28 @@
+# Example orchestrator configuration.
+#
+# The database_url is the orchestrator's alone: participants never receive one,
+# which is what makes "the orchestrator is the sole writer" a property of who
+# holds the credential as much as of the code.
+#
+# round_timeout_secs is 8 here so a demo moves along. The considered default is
+# 120 — long enough for a real contribution including tool use, short enough
+# that one silent participant does not stall the room.
+database_url = "postgres://zeroclaw:zeroclaw@localhost:5433/zeroclaw_ledger"
+bind = "127.0.0.1:8088"
+round_timeout_secs = 8
+stale_window = 0
+poll_secs = 0.3
+
+[[participants]]
+name = "reviewer"
+kind = "agent"
+url = "http://127.0.0.1:8181"
+
+[[participants]]
+name = "critic"
+kind = "agent"
+url = "http://127.0.0.1:8182"
+
+[[participants]]
+name = "jonathan"
+kind = "human"

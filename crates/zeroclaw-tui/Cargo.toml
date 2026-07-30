@@ -1,0 +1,22 @@
+[package]
+name = "zeroclaw-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Terminal view of a shared conversation ledger — watch a panel think, and join in."
+publish = false
+
+[[bin]]
+name = "zeroclaw-tui"
+path = "src/main.rs"
+
+[dependencies]
+zeroclaw-ledger.workspace = true
+
+crossterm = "0.29"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
+tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync"] }
+uuid = { version = "1.22", default-features = false, features = ["v4", "std", "serde"] }
