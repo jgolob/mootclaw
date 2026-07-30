@@ -579,9 +579,23 @@ where
         .expect("read audit events");
     assert_eq!(audited.len(), 1, "the audit log retains the event");
     assert_eq!(audited[0].event.detail, marker);
+    // A plausibility check, deliberately not an ordering one. The stamp comes
+    // from the database server, `Utc::now()` from this process, and the two
+    // clocks are not the same clock — against a containerised Postgres the
+    // server ran ~140ms ahead, which made a `occurred_at <= now()` assertion
+    // fail on the very first real-database run.
+    //
+    // That is the entire argument for keeping wall time out of the conversation
+    // record: two clocks disagree, so anything ordered by them is ordered by
+    // luck. The ledger orders by `seq` and derives causality from `round`, both
+    // assigned by the sole writer. Wall time here is operational metadata, and
+    // "roughly now" is all it ever needs to be.
+    let skew = (audited[0].occurred_at - Utc::now()).num_seconds().abs();
     assert!(
-        audited[0].occurred_at <= Utc::now(),
-        "the store stamps an arrival time"
+        skew < 3600,
+        "audit arrival time is implausible: {} versus a local now of {} ({skew}s apart)",
+        audited[0].occurred_at,
+        Utc::now()
     );
 
     assert!(
