@@ -22,6 +22,7 @@ pub mod ordering;
 
 use crate::types::{LedgerEntry, Participant, ParticipantId, Seq};
 use attribution::render_attribution;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub use ordering::order_round_batch;
@@ -31,7 +32,8 @@ pub use ordering::order_round_batch;
 /// An enum rather than a string so a projection cannot emit a role no provider
 /// recognises. Mapping to a provider's wire format happens in the crate that
 /// talks to the provider — this crate deliberately does not depend on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProjectedRole {
     System,
     User,
@@ -50,7 +52,7 @@ impl ProjectedRole {
 }
 
 /// One message in a reader's projected context.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectedMessage {
     pub role: ProjectedRole,
     pub content: String,

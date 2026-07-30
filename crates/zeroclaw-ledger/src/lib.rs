@@ -26,9 +26,14 @@
 //! values in and returns values out. Storage, HTTP, and the agent runtime live
 //! in the crates above it.
 
+pub mod mailbox;
 pub mod projection;
 pub mod round;
 pub mod types;
+
+pub use mailbox::{
+    BudgetStanding, DispositionNotice, InboxEnvelope, OutboxResponse, ThrottleState,
+};
 
 pub use projection::{
     ParticipantIndex, ProjectedMessage, ProjectedRole, ProjectionError, order_round_batch,

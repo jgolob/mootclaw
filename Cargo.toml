@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/zeroclaw-api", "crates/zeroclaw-ledger", "crates/zeroclaw-ledger-store", "crates/zeroclaw-infra", "crates/zeroclaw-config", "crates/zeroclaw-log", "crates/zeroclaw-spawn", "crates/zeroclaw-commands", "crates/zeroclaw-providers", "crates/zeroclaw-memory", "crates/zeroclaw-channels", "crates/zeroclaw-tools", "crates/zeroclaw-sop-graph", "crates/zeroclaw-runtime", "crates/zeroclaw-eval", "apps/zerocode", "crates/zeroclaw-plugins", "crates/zeroclaw-plugins/tests/fixtures/channel-fixture", "crates/zeroclaw-gateway", "crates/zeroclaw-hardware", "crates/zeroclaw-tool-call-parser", "crates/robot-kit", "crates/aardvark-sys", "crates/zeroclaw-macros", "apps/tauri", "tools/fill-translations", "xtask"]
+members = [".", "crates/zeroclaw-api", "crates/zeroclaw-ledger", "crates/zeroclaw-ledger-store", "crates/zeroclaw-bot", "crates/zeroclaw-infra", "crates/zeroclaw-config", "crates/zeroclaw-log", "crates/zeroclaw-spawn", "crates/zeroclaw-commands", "crates/zeroclaw-providers", "crates/zeroclaw-memory", "crates/zeroclaw-channels", "crates/zeroclaw-tools", "crates/zeroclaw-sop-graph", "crates/zeroclaw-runtime", "crates/zeroclaw-eval", "apps/zerocode", "crates/zeroclaw-plugins", "crates/zeroclaw-plugins/tests/fixtures/channel-fixture", "crates/zeroclaw-gateway", "crates/zeroclaw-hardware", "crates/zeroclaw-tool-call-parser", "crates/robot-kit", "crates/aardvark-sys", "crates/zeroclaw-macros", "apps/tauri", "tools/fill-translations", "xtask"]
 resolver = "2"
 
 [workspace.package]
@@ -13,6 +13,7 @@ rust-version = "1.96.1"
 zeroclaw-api = { path = "crates/zeroclaw-api", version = "0.8.3" }
 zeroclaw-ledger = { path = "crates/zeroclaw-ledger", version = "0.8.3" }
 zeroclaw-ledger-store = { path = "crates/zeroclaw-ledger-store", version = "0.8.3" }
+zeroclaw-bot = { path = "crates/zeroclaw-bot", version = "0.8.3" }
 zeroclaw-infra = { path = "crates/zeroclaw-infra", version = "0.8.3" }
 zeroclaw-config = { path = "crates/zeroclaw-config", version = "0.8.3", default-features = false }
 zeroclaw-log = { path = "crates/zeroclaw-log", version = "0.8.3" }

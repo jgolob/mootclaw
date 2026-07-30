@@ -1,0 +1,30 @@
+[package]
+name = "zeroclaw-bot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A shared-ledger participant: serves a mailbox, holds no authoritative conversation state."
+publish = false
+
+[[bin]]
+name = "zeroclaw-bot"
+path = "src/main.rs"
+
+[dependencies]
+zeroclaw-ledger.workspace = true
+zeroclaw-spawn.workspace = true
+
+# HTTP server — dependency style follows crates/zeroclaw-gateway/Cargo.toml.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "macros"] }
+tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
+thiserror = "2.0"
+uuid = { version = "1.22", default-features = false, features = ["v4", "std", "serde"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", default-features = false, features = ["util"] }

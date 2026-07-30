@@ -13201,6 +13201,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeroclaw-bot"
+version = "0.8.3"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "uuid",
+ "zeroclaw-ledger",
+ "zeroclaw-spawn",
+]
+
+[[package]]
 name = "zeroclaw-channel-plugin-fixture"
 version = "0.0.0"
 dependencies = [
