@@ -1,0 +1,25 @@
+[package]
+name = "zeroclaw-ledger-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Persistence for the shared conversation ledger — the `LedgerStore` trait and its implementations."
+publish = false
+
+# This crate is where I/O is allowed. The pure domain and decision logic lives
+# in `zeroclaw-ledger`, whose own test suite forbids async runtimes and database
+# clients; storage concerns belong here instead.
+[dependencies]
+zeroclaw-ledger.workspace = true
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
+thiserror = "2.0"
+uuid = { version = "1.22", default-features = false, features = ["v4", "std", "serde"] }
+
+[dev-dependencies]
+tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time"] }
+# Concurrency tests spawn through `zeroclaw_spawn::spawn!` rather than
+# `tokio::spawn`, matching the workspace clippy policy so spawned tasks inherit
+# the caller's attribution span.
+zeroclaw-spawn.workspace = true

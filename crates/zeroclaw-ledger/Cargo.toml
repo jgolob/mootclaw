@@ -1,0 +1,24 @@
+[package]
+name = "zeroclaw-ledger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared conversation ledger — the single source of truth and context window for every participant."
+publish = false
+
+# Deliberately dependency-light: this crate holds pure domain types and pure
+# decision logic (projection, round state, admission). It must never gain an
+# async runtime, a database client, or an HTTP framework — `purity` in
+# tests/purity.rs enforces that.
+[dependencies]
+# `std` is required (not merely convenient): the internally tagged enums
+# `Disposition` and `OracleVerdict` expand to serde's content-buffering
+# deserializers, which are gated behind `std`/`alloc`.
+serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
+uuid = { version = "1.22", default-features = false, features = ["v4", "std", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+thiserror = "2.0"
+
+[dev-dependencies]
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
+toml = "1.0"

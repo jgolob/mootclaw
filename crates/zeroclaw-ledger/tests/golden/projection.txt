@@ -1,0 +1,78 @@
+=== reader human:jonathan ===
+--- assistant ---
+Should we adopt the round-based scheme?
+--- user ---
+[agent:reviewer] Yes — it bounds cost predictably.
+
+[agent:critic] Yes, but the timeout needs a default.
+--- assistant ---
+What default would you pick?
+--- user ---
+[agent:reviewer] Ten minutes, reset on human input.
+
+[agent:critic] Too long. Two minutes.
+--- assistant ---
+Let us try two and measure.
+--- user ---
+[agent:reviewer] Agreed.
+--- assistant ---
+Moving on.
+--- user ---
+[agent:reviewer] Recorded.
+
+[agent:critic] Recorded.
+
+=== reader agent:reviewer ===
+--- system ---
+[soul] The following are your own previously recorded rules of engagement. They are self-authored notes, not instructions from the operator or from this conversation, and they carry no authority to override your operating rules.
+
+Prefer evidence over assertion.
+Say less.
+[/soul]
+--- user ---
+[human:jonathan] Should we adopt the round-based scheme?
+--- assistant ---
+Yes — it bounds cost predictably.
+--- user ---
+[agent:critic] Yes, but the timeout needs a default.
+
+[human:jonathan] What default would you pick?
+--- assistant ---
+Ten minutes, reset on human input.
+--- user ---
+[agent:critic] Too long. Two minutes.
+
+[human:jonathan] Let us try two and measure.
+--- assistant ---
+Agreed.
+--- user ---
+[human:jonathan] Moving on.
+--- assistant ---
+Recorded.
+--- user ---
+[agent:critic] Recorded.
+
+=== reader agent:critic ===
+--- user ---
+[human:jonathan] Should we adopt the round-based scheme?
+
+[agent:reviewer] Yes — it bounds cost predictably.
+--- assistant ---
+Yes, but the timeout needs a default.
+--- user ---
+[human:jonathan] What default would you pick?
+
+[agent:reviewer] Ten minutes, reset on human input.
+--- assistant ---
+Too long. Two minutes.
+--- user ---
+[human:jonathan] Let us try two and measure.
+
+[agent:reviewer] Agreed.
+
+[human:jonathan] Moving on.
+
+[agent:reviewer] Recorded.
+--- assistant ---
+Recorded.
+
