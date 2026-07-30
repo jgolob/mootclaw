@@ -15,7 +15,7 @@
 //! the audit log where no projection can ever read it.
 
 use crate::bot_client::{BotClient, BotEndpoint};
-use crate::human_desk::HumanDesk;
+use crate::human_desk::{HumanDesk, HumanResponse};
 use crate::oracle::Oracle;
 use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::BTreeMap;
@@ -179,23 +179,21 @@ where
 
             for participant in pending {
                 let Some(endpoint) = self.endpoints.get(&participant) else {
-                    // No mailbox: a human, who leaves contributions at the desk.
-                    if let Some(draft) = self.humans.peek(conversation, participant) {
-                        match draft.state {
-                            DraftState::Sealed => {
-                                if machine.record_seal(participant, Utc::now()).is_ok()
-                                    && let Some(claimed) =
-                                        self.humans.take(conversation, participant)
-                                {
-                                    sealed.insert(participant, claimed);
-                                }
-                            }
-                            DraftState::Pass => {
-                                let _ = machine.record_pass(participant, Utc::now());
+                    // No mailbox: a person. Their words, if any, are already in
+                    // the ledger — the desk only says whether they have
+                    // responded, so the round need not keep waiting on them.
+                    match self.humans.peek(conversation, participant) {
+                        Some(HumanResponse::Contributed) => {
+                            if machine.record_seal(participant, Utc::now()).is_ok() {
                                 self.humans.take(conversation, participant);
                             }
-                            DraftState::Draft => {}
                         }
+                        Some(HumanResponse::Passed)
+                            if machine.record_pass(participant, Utc::now()).is_ok() =>
+                        {
+                            self.humans.take(conversation, participant);
+                        }
+                        _ => {}
                     }
                     continue;
                 };

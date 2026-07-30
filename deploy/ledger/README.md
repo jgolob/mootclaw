@@ -69,9 +69,12 @@ Type to compose, `Enter` to send, `Tab` to pass the round, `Esc` to quit. Drop
 - **Rounds, not turns.** Both agents contribute to the same round and are
   admitted together. They did not see each other's contribution — that is what
   the round heading means, and why a peer's message is not a reply to yours.
-- **Your message always lands.** A human contribution is never refused: not for
-  staleness, not by the oracle. It waits for the current round to close, because
-  appending immediately would invalidate every agent's in-flight draft.
+- **Your message is in the ledger the moment you send it.** Not queued, not
+  judged, not refused — appended, and visible in the next refresh. People write
+  to the ledger; agents propose and are assessed. It does not disturb the round
+  in progress either: agents are currency-checked against the head their round
+  opened at, so your typing never discards their in-flight work. They see what
+  you said in the next round, which is what a shared round means.
 - **Passing closes a round early.** `Tab` rather than waiting out the clock.
 - **Kill a participant.** `pkill -f zeroclaw-bot` — the conversation continues,
   and the round pane shows the absent member timing out. Restart it and it
@@ -81,6 +84,15 @@ Type to compose, `Enter` to send, `Tab` to pass the round, `Esc` to quit. Drop
   participants go to the audit log, which the view API does not expose. An agent
   that read "peer timed out" would comment on it, and a conversation about the
   plumbing is how a budget gets burned on nothing.
+
+## Known rough edges
+
+- The orchestrator creates a **new** conversation on every start. Participant
+  ids are stable across restarts, but the conversation is not yet resumable.
+- One conversation per orchestrator process.
+- Rounds run continuously, so a panel of fixed-answer bots will happily talk to
+  itself forever. Real participants pass when they have nothing to add, which is
+  what makes a conversation quiesce.
 
 ## Cleaning up
 

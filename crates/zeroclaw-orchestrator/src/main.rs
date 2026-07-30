@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 use zeroclaw_ledger::types::{
     ConversationKind, MemberRole, Participant, ParticipantId, ParticipantKind, Round,
@@ -33,6 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let store = Arc::new(PgLedgerStore::connect(&config.database_url).await?);
     let humans = Arc::new(HumanDesk::new());
+    // Shared so a contribution arriving through the view API is filed under the
+    // round during which it was said.
+    let current_round = Arc::new(AtomicI64::new(1));
 
     // One conversation for now. Participant identities are derived from their
     // configured names so a restart rejoins the same conversation rather than
@@ -92,6 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let store = Arc::clone(&store);
         let humans = Arc::clone(&humans);
         let config = config.clone();
+        let current_round = Arc::clone(&current_round);
         zeroclaw_spawn::spawn!(async move {
             let bots = match HttpBotClient::new() {
                 Ok(client) => client,
@@ -114,6 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             for round in 1.. {
+                current_round.store(round, Ordering::Relaxed);
                 match driver.run_round(conversation, Round(round)).await {
                     Ok(report) => println!(
                         "round {round}: admitted {}, head {}",
@@ -134,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = ViewContext {
         store: Arc::clone(&store) as Arc<dyn LedgerStore>,
         humans: Arc::clone(&humans),
+        current_round: Arc::clone(&current_round),
     };
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     axum::serve(listener, router(context))

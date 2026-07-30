@@ -507,28 +507,40 @@ async fn a_human_member_without_a_mailbox_does_not_stall_the_round() {
 }
 
 #[tokio::test]
-async fn a_human_contribution_always_lands() {
-    // People are the principal, not proposers. A person's words are admitted
-    // whatever the oracle would have said about them and however long they took
-    // to type, because refusing a person's contribution is a category error.
+async fn a_human_contribution_is_already_in_the_ledger() {
+    // People write to the ledger; agents propose and are judged. A person's words
+    // are appended when they say them, so by the time the round closes there is
+    // nothing of theirs left to admit — and nothing that could have been refused.
     let store = InMemoryLedgerStore::new();
     let bot = agent("bot");
     let person = human("jonathan");
     let members = [bot.clone(), person.clone()];
     let conversation = conversation_with(&store, &members, Duration::from_millis(200)).await;
 
-    let bots = MockBotClient::new().with(bot.id, MockBehaviour::Contribute("brief".to_string()));
+    // What the view API does on receiving a contribution: append, then record
+    // that this person has responded.
+    store
+        .append_batch(
+            conversation,
+            Round(1),
+            vec![zeroclaw_ledger::types::NewEntry {
+                participant_id: person.id,
+                content: "x".repeat(5_000),
+                kind: zeroclaw_ledger::types::EntryKind::Contribution,
+            }],
+        )
+        .await
+        .expect("a person's words go straight in");
+
     let humans = HumanDesk::new();
+    humans.contributed(conversation, person.id);
 
-    // Far longer than the oracle's limit, and composed against a sequence that
-    // has long since been superseded.
-    humans
-        .seal(conversation, person.id, Seq(0), "x".repeat(5_000))
-        .expect("seal a human contribution");
-
+    let bots = MockBotClient::new().with(bot.id, MockBehaviour::Contribute("brief".to_string()));
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
+        // A limit the person's contribution violates by two orders of magnitude,
+        // to show it was never subject to one.
         oracle: &RulesOracle { max_chars: 10 },
         endpoints: endpoints(std::slice::from_ref(&bot)),
         humans: &humans,
@@ -549,11 +561,83 @@ async fn a_human_contribution_always_lands() {
         entries
             .iter()
             .any(|entry| entry.participant_id == person.id && entry.content.len() == 5_000),
-        "the person's contribution landed despite being oversized and stale"
+        "the person's words are in the ledger, oracle limit notwithstanding"
     );
     assert!(
         entries.iter().any(|entry| entry.content == "brief"),
         "the agent's contribution landed too"
+    );
+
+    let state: BTreeMap<ParticipantId, RoundDisposition> = store
+        .round_state(conversation, Round(1))
+        .await
+        .expect("round state")
+        .into_iter()
+        .collect();
+    assert_eq!(
+        state.get(&person.id),
+        Some(&RoundDisposition::Sealed),
+        "someone who spoke is shown as having spoken, not as having passed"
+    );
+}
+
+#[tokio::test]
+async fn a_human_contribution_does_not_invalidate_in_flight_agent_work() {
+    // The reason an immediate append is safe: agents are currency-checked
+    // against the head their round opened at, not the live head. A person typing
+    // mid-round must not silently discard the whole panel's work.
+    let store = InMemoryLedgerStore::new();
+    let bot = agent("bot");
+    let person = human("jonathan");
+    let members = [bot.clone(), person.clone()];
+    let conversation = conversation_with(&store, &members, Duration::from_millis(200)).await;
+
+    let bots = MockBotClient::new().with(bot.id, MockBehaviour::Contribute("composed".to_string()));
+    let humans = HumanDesk::new();
+    let driver = RoundDriver {
+        store: &store,
+        bots: &bots,
+        oracle: &AdmitAll,
+        endpoints: endpoints(std::slice::from_ref(&bot)),
+        humans: &humans,
+        stale_window: 0,
+        poll_interval: FAST_POLL,
+    };
+
+    // Round 1 establishes a head the agent will compose against.
+    driver
+        .run_round(conversation, Round(1))
+        .await
+        .expect("round 1");
+    let head_after_first = store.head_seq(conversation).await.expect("head");
+
+    // A person speaks, advancing the head while round 2 is about to run.
+    store
+        .append_batch(
+            conversation,
+            Round(2),
+            vec![zeroclaw_ledger::types::NewEntry {
+                participant_id: person.id,
+                content: "typed mid-round".to_string(),
+                kind: zeroclaw_ledger::types::EntryKind::Contribution,
+            }],
+        )
+        .await
+        .expect("append");
+    humans.contributed(conversation, person.id);
+    assert!(
+        store.head_seq(conversation).await.expect("head") > head_after_first,
+        "the person's words moved the head"
+    );
+
+    let report = driver
+        .run_round(conversation, Round(2))
+        .await
+        .expect("round 2");
+    assert_eq!(
+        report.admitted.len(),
+        1,
+        "the agent's contribution was admitted, not refused as stale"
     );
 }
 
@@ -605,9 +689,7 @@ async fn a_human_pass_closes_the_round_early() {
 
     let bots = MockBotClient::new().with(bot.id, MockBehaviour::Contribute("said".to_string()));
     let humans = HumanDesk::new();
-    humans
-        .pass(conversation, person.id, Seq::EMPTY)
-        .expect("pass");
+    humans.passed(conversation, person.id);
 
     let driver = RoundDriver {
         store: &store,

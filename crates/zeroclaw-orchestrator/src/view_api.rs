@@ -16,8 +16,10 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use zeroclaw_ledger::types::{
-    ConversationId, ParticipantId, ParticipantKind, Round, RoundDisposition, Seq,
+    ConversationId, EntryKind, NewEntry, ParticipantId, ParticipantKind, Round, RoundDisposition,
+    Seq,
 };
 use zeroclaw_ledger_store::store::LedgerStore;
 
@@ -73,6 +75,9 @@ pub struct Contribution {
 pub struct ViewContext {
     pub store: Arc<dyn LedgerStore>,
     pub humans: Arc<HumanDesk>,
+    /// The round currently open, so a person's contribution is filed under the
+    /// round during which they said it.
+    pub current_round: Arc<AtomicI64>,
 }
 
 /// The client-facing API.
@@ -217,7 +222,7 @@ async fn post_contribution(
 ) -> Result<StatusCode, StatusCode> {
     let conversation = ConversationId(conversation);
     if contribution.content.trim().is_empty() {
-        // An empty contribution is a pass, not an empty turn in the ledger.
+        // Nothing typed is a pass, not an empty turn in the ledger.
         return post_pass(
             State(context),
             Path(conversation.0),
@@ -228,21 +233,36 @@ async fn post_contribution(
         .await;
     }
 
-    let meta = context
+    // Appended immediately. A person's words go into the record when they say
+    // them — they are not a proposal awaiting a verdict, and a ledger that
+    // lagged the conversation would be the wrong way round for the participant
+    // the whole thing exists to serve.
+    //
+    // This does not disturb the round in progress. Agents are currency-checked
+    // against the head captured when their round opened, not the live head, so a
+    // contribution landing mid-round invalidates nobody's in-flight work. The
+    // round number filed here keeps the meaning of a shared round intact: those
+    // agents composed before this arrived and will see it next round.
+    let round = Round(context.current_round.load(Ordering::Relaxed).max(1));
+    context
         .store
-        .conversation_meta(conversation)
+        .append_batch(
+            conversation,
+            round,
+            vec![NewEntry {
+                participant_id: contribution.participant_id,
+                content: contribution.content,
+                kind: EntryKind::Contribution,
+            }],
+        )
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    // Release the round from waiting on them; they have spoken.
     context
         .humans
-        .seal(
-            conversation,
-            contribution.participant_id,
-            meta.head_seq,
-            contribution.content,
-        )
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    Ok(StatusCode::ACCEPTED)
+        .contributed(conversation, contribution.participant_id);
+    Ok(StatusCode::CREATED)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -260,14 +280,6 @@ async fn post_pass(
     Json(request): Json<PassRequest>,
 ) -> Result<StatusCode, StatusCode> {
     let conversation = ConversationId(conversation);
-    let meta = context
-        .store
-        .conversation_meta(conversation)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    context
-        .humans
-        .pass(conversation, request.participant_id, meta.head_seq)
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    context.humans.passed(conversation, request.participant_id);
     Ok(StatusCode::ACCEPTED)
 }
