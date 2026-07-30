@@ -16,6 +16,7 @@ use zeroclaw_ledger::types::{
 use zeroclaw_ledger_store::fixtures::{agent, human};
 use zeroclaw_ledger_store::{InMemoryLedgerStore, LedgerStore};
 use zeroclaw_orchestrator::bot_client::BotEndpoint;
+use zeroclaw_orchestrator::human_desk::HumanDesk;
 use zeroclaw_orchestrator::mock::{MockBehaviour, MockBotClient};
 use zeroclaw_orchestrator::oracle::{AdmitAll, RulesOracle};
 use zeroclaw_orchestrator::round_driver::RoundDriver;
@@ -78,11 +79,14 @@ async fn two_rounds_advance_the_conversation() {
             MockBehaviour::Contribute("critic view".to_string()),
         );
 
+    let humans = HumanDesk::new();
+
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -136,11 +140,13 @@ async fn a_participant_contributes_at_most_once_per_round() {
         reviewer.id,
         MockBehaviour::Contribute("one point".to_string()),
     );
+    let humans = HumanDesk::new();
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -174,11 +180,14 @@ async fn contributions_land_in_deterministic_order() {
         );
     }
 
+    let humans = HumanDesk::new();
+
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -208,11 +217,13 @@ async fn a_round_of_passes_admits_nothing_and_leaves_the_ledger_untouched() {
     let conversation = conversation_with(&store, &members, Duration::from_secs(60)).await;
 
     let bots = MockBotClient::new().with(quiet.id, MockBehaviour::Pass);
+    let humans = HumanDesk::new();
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -248,11 +259,14 @@ async fn a_silent_participant_times_out_without_stalling_the_round() {
         .with(talker.id, MockBehaviour::Contribute("present".to_string()))
         .with(ghost.id, MockBehaviour::Silent);
 
+    let humans = HumanDesk::new();
+
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -292,11 +306,14 @@ async fn an_unreachable_participant_is_audited_not_fatal() {
         )
         .with(dead.id, MockBehaviour::Unreachable);
 
+    let humans = HumanDesk::new();
+
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -348,11 +365,14 @@ async fn a_stale_draft_is_refused_and_its_author_told_to_reconsider() {
             },
         );
 
+    let humans = HumanDesk::new();
+
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -392,11 +412,13 @@ async fn admitted_authors_learn_their_sequence() {
         speaker.id,
         MockBehaviour::Contribute("recorded".to_string()),
     );
+    let humans = HumanDesk::new();
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -421,11 +443,13 @@ async fn a_rejected_contribution_never_enters_the_ledger() {
     let conversation = conversation_with(&store, &members, Duration::from_secs(60)).await;
 
     let bots = MockBotClient::new().with(verbose.id, MockBehaviour::Contribute("x".repeat(200)));
+    let humans = HumanDesk::new();
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &RulesOracle { max_chars: 10 },
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -464,11 +488,13 @@ async fn a_human_member_without_a_mailbox_does_not_stall_the_round() {
     let bots = MockBotClient::new().with(bot.id, MockBehaviour::Contribute("hello".to_string()));
 
     // Only the bot has an endpoint.
+    let humans = HumanDesk::new();
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &AdmitAll,
         endpoints: endpoints(std::slice::from_ref(&bot)),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -478,4 +504,136 @@ async fn a_human_member_without_a_mailbox_does_not_stall_the_round() {
         .await
         .expect("round 1");
     assert_eq!(report.admitted.len(), 1);
+}
+
+#[tokio::test]
+async fn a_human_contribution_always_lands() {
+    // People are the principal, not proposers. A person's words are admitted
+    // whatever the oracle would have said about them and however long they took
+    // to type, because refusing a person's contribution is a category error.
+    let store = InMemoryLedgerStore::new();
+    let bot = agent("bot");
+    let person = human("jonathan");
+    let members = [bot.clone(), person.clone()];
+    let conversation = conversation_with(&store, &members, Duration::from_millis(200)).await;
+
+    let bots = MockBotClient::new().with(bot.id, MockBehaviour::Contribute("brief".to_string()));
+    let humans = HumanDesk::new();
+
+    // Far longer than the oracle's limit, and composed against a sequence that
+    // has long since been superseded.
+    humans
+        .seal(conversation, person.id, Seq(0), "x".repeat(5_000))
+        .expect("seal a human contribution");
+
+    let driver = RoundDriver {
+        store: &store,
+        bots: &bots,
+        oracle: &RulesOracle { max_chars: 10 },
+        endpoints: endpoints(std::slice::from_ref(&bot)),
+        humans: &humans,
+        stale_window: 0,
+        poll_interval: FAST_POLL,
+    };
+
+    driver
+        .run_round(conversation, Round(1))
+        .await
+        .expect("round 1");
+
+    let entries = store
+        .entries_from(conversation, Seq::EMPTY)
+        .await
+        .expect("read ledger");
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry.participant_id == person.id && entry.content.len() == 5_000),
+        "the person's contribution landed despite being oversized and stale"
+    );
+    assert!(
+        entries.iter().any(|entry| entry.content == "brief"),
+        "the agent's contribution landed too"
+    );
+}
+
+#[tokio::test]
+async fn a_human_who_says_nothing_does_not_stall_the_round() {
+    // The other half of the guarantee: a person is always able to contribute,
+    // and never obliged to. Someone who stepped away must not hold the panel.
+    let store = InMemoryLedgerStore::new();
+    let bot = agent("bot");
+    let person = human("jonathan");
+    let members = [bot.clone(), person.clone()];
+    let conversation = conversation_with(&store, &members, Duration::from_millis(120)).await;
+
+    let bots = MockBotClient::new().with(bot.id, MockBehaviour::Contribute("thinking".to_string()));
+    let humans = HumanDesk::new();
+    let driver = RoundDriver {
+        store: &store,
+        bots: &bots,
+        oracle: &AdmitAll,
+        endpoints: endpoints(std::slice::from_ref(&bot)),
+        humans: &humans,
+        stale_window: 0,
+        poll_interval: FAST_POLL,
+    };
+
+    let report = driver
+        .run_round(conversation, Round(1))
+        .await
+        .expect("the round completes without the person");
+    assert_eq!(report.admitted.len(), 1);
+
+    let state: BTreeMap<ParticipantId, RoundDisposition> = store
+        .round_state(conversation, Round(1))
+        .await
+        .expect("round state")
+        .into_iter()
+        .collect();
+    assert_eq!(state.get(&person.id), Some(&RoundDisposition::TimedOut));
+}
+
+#[tokio::test]
+async fn a_human_pass_closes_the_round_early() {
+    let store = InMemoryLedgerStore::new();
+    let bot = agent("bot");
+    let person = human("jonathan");
+    let members = [bot.clone(), person.clone()];
+    // A long window: if the round waited it out, this test would be slow.
+    let conversation = conversation_with(&store, &members, Duration::from_secs(30)).await;
+
+    let bots = MockBotClient::new().with(bot.id, MockBehaviour::Contribute("said".to_string()));
+    let humans = HumanDesk::new();
+    humans
+        .pass(conversation, person.id, Seq::EMPTY)
+        .expect("pass");
+
+    let driver = RoundDriver {
+        store: &store,
+        bots: &bots,
+        oracle: &AdmitAll,
+        endpoints: endpoints(std::slice::from_ref(&bot)),
+        humans: &humans,
+        stale_window: 0,
+        poll_interval: FAST_POLL,
+    };
+
+    let started = std::time::Instant::now();
+    driver
+        .run_round(conversation, Round(1))
+        .await
+        .expect("round 1");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "an explicit pass closes the round rather than running the clock down"
+    );
+
+    let state: BTreeMap<ParticipantId, RoundDisposition> = store
+        .round_state(conversation, Round(1))
+        .await
+        .expect("round state")
+        .into_iter()
+        .collect();
+    assert_eq!(state.get(&person.id), Some(&RoundDisposition::Passed));
 }

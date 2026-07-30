@@ -15,9 +15,11 @@
 //! the audit log where no projection can ever read it.
 
 use crate::bot_client::{BotClient, BotEndpoint};
+use crate::human_desk::HumanDesk;
 use crate::oracle::Oracle;
 use chrono::{DateTime, TimeDelta, Utc};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::time::Duration;
 use zeroclaw_ledger::mailbox::{BudgetStanding, DispositionNotice, InboxEnvelope, OutboxResponse};
 use zeroclaw_ledger::projection::{ParticipantIndex, project_for_reader};
@@ -26,7 +28,7 @@ use zeroclaw_ledger::round::{
 };
 use zeroclaw_ledger::types::{
     AuditEvent, AuditKind, ConversationId, Disposition, Draft, DraftState, MemberRole,
-    ParticipantId, Round, RoundDisposition, Seq,
+    ParticipantId, ParticipantKind, Round, RoundDisposition, Seq,
 };
 use zeroclaw_ledger_store::store::{LedgerStore, ProposalRecord, StoreError};
 
@@ -41,6 +43,9 @@ pub struct RoundDriver<'a, S: LedgerStore + ?Sized, C: BotClient + ?Sized, O: Or
     /// Where each participant's mailbox lives. Humans have no endpoint and are
     /// simply absent.
     pub endpoints: BTreeMap<ParticipantId, BotEndpoint>,
+    /// Where human contributions wait. A human is an ordinary member — enrolled,
+    /// able to pass, and timed out like anyone else if they say nothing.
+    pub humans: &'a HumanDesk,
     pub stale_window: i64,
     pub poll_interval: Duration,
 }
@@ -86,7 +91,12 @@ where
 
         let members = self.store.members(conversation).await?;
         let mut contributors = Vec::new();
+        // People are never refused: not for staleness, not by the oracle.
+        let mut humans: BTreeSet<ParticipantId> = BTreeSet::new();
         for member in &members {
+            if matches!(member.kind, ParticipantKind::Human) {
+                humans.insert(member.id);
+            }
             if matches!(
                 self.store.member_role(conversation, member.id).await?,
                 MemberRole::Contributor
@@ -145,7 +155,7 @@ where
             .await?;
         self.close_round(conversation, round, &machine).await?;
 
-        self.admit(conversation, round, head, sealed).await
+        self.admit(conversation, round, head, sealed, &humans).await
     }
 
     /// Polls outboxes until the round closes, returning the sealed drafts.
@@ -169,6 +179,24 @@ where
 
             for participant in pending {
                 let Some(endpoint) = self.endpoints.get(&participant) else {
+                    // No mailbox: a human, who leaves contributions at the desk.
+                    if let Some(draft) = self.humans.peek(conversation, participant) {
+                        match draft.state {
+                            DraftState::Sealed => {
+                                if machine.record_seal(participant, Utc::now()).is_ok()
+                                    && let Some(claimed) =
+                                        self.humans.take(conversation, participant)
+                                {
+                                    sealed.insert(participant, claimed);
+                                }
+                            }
+                            DraftState::Pass => {
+                                let _ = machine.record_pass(participant, Utc::now());
+                                self.humans.take(conversation, participant);
+                            }
+                            DraftState::Draft => {}
+                        }
+                    }
                     continue;
                 };
                 let response = match self.bots.fetch_outbox(endpoint, conversation).await {
@@ -258,6 +286,7 @@ where
         round: Round,
         head: Seq,
         sealed: Vec<Draft>,
+        humans: &BTreeSet<ParticipantId>,
     ) -> Result<RoundReport, DriverError> {
         for draft in &sealed {
             self.store
@@ -273,7 +302,7 @@ where
                 .await?;
         }
 
-        let plan = plan_admission(sealed, head, self.stale_window, conversation, round);
+        let plan = plan_admission(sealed, head, self.stale_window, conversation, round, humans);
 
         // Only current drafts reach the oracle — stale ones never enter
         // `to_judge`, so there is no path that spends a judgement on one.
@@ -286,7 +315,13 @@ where
             judged.push((draft, verdict));
         }
 
-        let outcome = finalize_admission(plan.refused, judged, conversation, round);
+        let outcome = finalize_admission(
+            plan.refused,
+            judged,
+            plan.exempt.clone(),
+            conversation,
+            round,
+        );
 
         for event in &outcome.audit {
             self.store.append_audit(event.clone()).await?;

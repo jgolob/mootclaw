@@ -19,6 +19,7 @@ use zeroclaw_ledger::types::{
 use zeroclaw_ledger_store::fixtures::agent;
 use zeroclaw_ledger_store::{InMemoryLedgerStore, LedgerStore};
 use zeroclaw_orchestrator::bot_client::BotEndpoint;
+use zeroclaw_orchestrator::human_desk::HumanDesk;
 use zeroclaw_orchestrator::mock::{MockBehaviour, MockBotClient};
 use zeroclaw_orchestrator::oracle::RulesOracle;
 use zeroclaw_orchestrator::round_driver::RoundDriver;
@@ -102,11 +103,14 @@ async fn no_audit_text_ever_reaches_a_participants_context() {
     let store = InMemoryLedgerStore::new();
     let (conversation, members, bots) = troubled_conversation(&store).await;
 
+    let humans = HumanDesk::new();
+
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &RulesOracle { max_chars: 50 },
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -179,11 +183,14 @@ async fn the_ledger_holds_only_genuine_contributions() {
     let store = InMemoryLedgerStore::new();
     let (conversation, members, bots) = troubled_conversation(&store).await;
 
+    let humans = HumanDesk::new();
+
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &RulesOracle { max_chars: 50 },
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };
@@ -221,11 +228,14 @@ async fn a_rejection_reason_is_told_to_its_author_and_to_nobody_else() {
     let store = InMemoryLedgerStore::new();
     let (conversation, members, bots) = troubled_conversation(&store).await;
 
+    let humans = HumanDesk::new();
+
     let driver = RoundDriver {
         store: &store,
         bots: &bots,
         oracle: &RulesOracle { max_chars: 50 },
         endpoints: endpoints(&members),
+        humans: &humans,
         stale_window: 0,
         poll_interval: FAST_POLL,
     };

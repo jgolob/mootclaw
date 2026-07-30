@@ -11,11 +11,15 @@
 //! saw one another's drafts.
 
 pub mod bot_client;
+pub mod config;
+pub mod human_desk;
 pub mod mock;
 pub mod oracle;
 pub mod round_driver;
+pub mod view_api;
 
 pub use bot_client::{BotCallError, BotClient, BotEndpoint, HttpBotClient};
+pub use human_desk::HumanDesk;
 pub use mock::{MockBehaviour, MockBotClient};
 pub use oracle::{AdmitAll, Oracle, RulesOracle};
 pub use round_driver::{DriverError, RoundDriver, RoundReport};

@@ -28,6 +28,7 @@ use crate::types::{
     AuditEvent, AuditKind, ConversationId, Disposition, Draft, EntryKind, NewEntry, ParticipantId,
     Round, Seq,
 };
+use std::collections::BTreeSet;
 
 /// A draft refused before it reached the oracle.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,11 +38,19 @@ pub struct RefusedDraft {
     pub audit: AuditEvent,
 }
 
-/// What to judge, and what was already refused.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What to judge, what is exempt, and what was already refused.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AdmissionPlan {
     /// Drafts current enough to be worth an oracle call, in submission order.
     pub to_judge: Vec<Draft>,
+    /// Drafts that bypass judgement entirely and are always admitted.
+    ///
+    /// Humans. A person's contribution is not a proposal to be assessed: they
+    /// are the principal the conversation exists to serve, and telling them
+    /// their words were stale or unworthy would be both rude and wrong. Currency
+    /// and the oracle exist to keep agents from flooding or gaming the ledger,
+    /// which is not a problem a person typing into a client has.
+    pub exempt: Vec<Draft>,
     /// Drafts refused on currency alone. The oracle never sees these.
     pub refused: Vec<RefusedDraft>,
 }
@@ -72,11 +81,17 @@ pub fn plan_admission(
     stale_window: i64,
     conversation: ConversationId,
     round: Round,
+    exempt_participants: &BTreeSet<ParticipantId>,
 ) -> AdmissionPlan {
     let mut to_judge = Vec::new();
+    let mut exempt = Vec::new();
     let mut refused = Vec::new();
 
     for draft in drafts {
+        if exempt_participants.contains(&draft.participant_id) {
+            exempt.push(draft);
+            continue;
+        }
         match validate_currency(draft.composed_against_seq, head_seq, stale_window) {
             CurrencyOutcome::Current => to_judge.push(draft),
             CurrencyOutcome::Stale { current_seq } => refused.push(RefusedDraft {
@@ -96,7 +111,11 @@ pub fn plan_admission(
         }
     }
 
-    AdmissionPlan { to_judge, refused }
+    AdmissionPlan {
+        to_judge,
+        exempt,
+        refused,
+    }
 }
 
 /// Assembles the round's outcome from the oracle's verdicts.
@@ -112,6 +131,7 @@ pub fn plan_admission(
 pub fn finalize_admission(
     refused: Vec<RefusedDraft>,
     judged: Vec<(Draft, crate::types::OracleVerdict)>,
+    exempt: Vec<Draft>,
     conversation: ConversationId,
     round: Round,
 ) -> AdmissionOutcome {
@@ -143,15 +163,29 @@ pub fn finalize_admission(
         for (draft, _) in &judged {
             dispositions.push((draft.participant_id, Disposition::Expunged));
         }
+        // Exempt contributions still land. Containment is about withdrawing
+        // agent-authored content that poisoned the record; a person's words are
+        // theirs, were composed before any of this, and are not the thing being
+        // contained.
+        let to_append = order_round_batch(exempt)
+            .iter()
+            .map(|draft| NewEntry {
+                participant_id: draft.participant_id,
+                content: draft.content.clone(),
+                kind: EntryKind::Contribution,
+            })
+            .collect();
         return AdmissionOutcome {
-            to_append: Vec::new(),
+            to_append,
             dispositions,
             audit,
             contamination: Some(expunge_from),
         };
     }
 
-    let mut admitted: Vec<Draft> = Vec::new();
+    // Exempt drafts are admitted without ever being judged: there is no code
+    // path that can refuse one.
+    let mut admitted: Vec<Draft> = exempt;
     for (draft, verdict) in judged {
         match verdict {
             OracleVerdict::Admit => admitted.push(draft),
@@ -247,14 +281,34 @@ mod tests {
     }
 
     fn plan(drafts: Vec<Draft>, head: i64) -> AdmissionPlan {
-        plan_admission(drafts, Seq(head), 0, conversation(), Round(1))
+        plan_admission(
+            drafts,
+            Seq(head),
+            0,
+            conversation(),
+            Round(1),
+            &BTreeSet::new(),
+        )
+    }
+
+    /// A plan in which `exempt` is never refused — the human case.
+    fn plan_with_exempt(drafts: Vec<Draft>, head: i64, exempt: &[u128]) -> AdmissionPlan {
+        let exempt: BTreeSet<ParticipantId> = exempt.iter().map(|n| id(*n)).collect();
+        plan_admission(drafts, Seq(head), 0, conversation(), Round(1), &exempt)
     }
 
     fn finalize(
         refused: Vec<RefusedDraft>,
         judged: Vec<(Draft, OracleVerdict)>,
     ) -> AdmissionOutcome {
-        finalize_admission(refused, judged, conversation(), Round(1))
+        finalize_admission(refused, judged, Vec::new(), conversation(), Round(1))
+    }
+
+    fn finalize_with_exempt(
+        plan: AdmissionPlan,
+        judged: Vec<(Draft, OracleVerdict)>,
+    ) -> AdmissionOutcome {
+        finalize_admission(plan.refused, judged, plan.exempt, conversation(), Round(1))
     }
 
     #[test]
@@ -505,6 +559,90 @@ mod tests {
                 (id(1), Disposition::Admitted { seq: Seq(11) }),
                 (id(2), Disposition::Admitted { seq: Seq(12) }),
             ]
+        );
+    }
+
+    #[test]
+    fn an_exempt_contribution_is_never_refused_for_staleness() {
+        // A person typing into a client is the principal, not a proposer. Telling
+        // them their words were stale would be both rude and wrong.
+        let plan = plan_with_exempt(
+            vec![draft(1, "written a while ago", 1), draft(2, "current", 10)],
+            10,
+            &[1],
+        );
+        assert_eq!(plan.exempt.len(), 1, "the human draft bypasses currency");
+        assert!(plan.refused.is_empty(), "nothing was refused");
+        assert_eq!(plan.to_judge.len(), 1, "only the agent is judged");
+    }
+
+    #[test]
+    fn an_exempt_contribution_never_reaches_the_oracle() {
+        let plan = plan_with_exempt(vec![draft(1, "a person speaking", 1)], 10, &[1]);
+        assert!(
+            plan.to_judge.is_empty(),
+            "there is no code path that submits a person's words for judgement"
+        );
+
+        let outcome = finalize_with_exempt(plan, Vec::new());
+        assert_eq!(outcome.to_append.len(), 1);
+        assert_eq!(outcome.to_append[0].content, "a person speaking");
+    }
+
+    #[test]
+    fn an_exempt_contribution_survives_a_contaminated_round() {
+        // Containment withdraws agent-authored content that poisoned the record.
+        // A person's words were composed before any of that and are not the thing
+        // being contained.
+        let plan = plan_with_exempt(
+            vec![draft(1, "a person speaking", 10), draft(2, "poison", 10)],
+            10,
+            &[1],
+        );
+        let judged = vec![(
+            plan.to_judge[0].clone(),
+            OracleVerdict::Contaminated {
+                expunge_from: Seq(5),
+            },
+        )];
+
+        let outcome = finalize_with_exempt(plan, judged);
+        assert_eq!(outcome.contamination, Some(Seq(5)));
+        assert_eq!(
+            outcome.to_append.len(),
+            1,
+            "the person's contribution still lands"
+        );
+        assert_eq!(outcome.to_append[0].content, "a person speaking");
+    }
+
+    #[test]
+    fn exempt_and_judged_contributions_share_one_deterministic_order() {
+        let plan = plan_with_exempt(
+            vec![
+                draft(3, "gamma", 10),
+                draft(1, "alpha", 10),
+                draft(2, "beta", 10),
+            ],
+            10,
+            &[2],
+        );
+        let judged = plan
+            .to_judge
+            .clone()
+            .into_iter()
+            .map(|d| (d, OracleVerdict::Admit))
+            .collect();
+        let outcome = finalize_with_exempt(plan, judged);
+        let contents: Vec<&str> = outcome
+            .to_append
+            .iter()
+            .map(|e| e.content.as_str())
+            .collect();
+        assert_eq!(
+            contents,
+            vec!["alpha", "beta", "gamma"],
+            "exemption changes who is judged, not how a round is ordered"
         );
     }
 
