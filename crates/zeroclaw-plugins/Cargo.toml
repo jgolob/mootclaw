@@ -32,7 +32,7 @@ wasmtime = { version = "45.0.3", default-features = false, features = [
   "std",
   "async",
 ], optional = true }
-wasmtime-wasi = { version = "45.0.3", default-features = false, features = [
+wasmtime-wasi = { version = "47.0.2", default-features = false, features = [
   "p2",
 ], optional = true }
 wasmtime-wasi-http = { version = "45.0.3", default-features = false, features = [
