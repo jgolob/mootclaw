@@ -17,7 +17,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 directories = "6.0"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
-chacha20poly1305 = "0.10"
+chacha20poly1305 = "0.11"
 hex = "0.4"
 hmac = "0.12"
 parking_lot = "0.12"
